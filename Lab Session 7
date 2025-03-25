@@ -1,1 +1,102 @@
+import pandas as pd
+from sklearn.model_selection import train_test_split, ShuffleSplit, RandomizedSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier, GradientBoostingClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.svm import SVC
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import accuracy_score, classification_report
+import warnings
+warnings.filterwarnings("ignore")
 
+# Function to load and preprocess the dataset
+def load_and_preprocess_dataset(filepath):
+    data = pd.read_excel(filepath)
+    data['Duration'] = data['End time'] - data['Start time']  # Feature engineering
+    features = data[['Duration']]
+    labels = data['Clarity']
+    return features, labels, data
+
+# Function to create the preprocessing pipeline
+def create_preprocessor():
+    preprocessor = ColumnTransformer([
+        ('scale', StandardScaler(), ['Duration'])  # Only numerical feature
+    ])
+    return preprocessor
+
+# Function to perform RandomizedSearchCV for RandomForest
+def tune_random_forest(preprocessor, X_train, y_train):
+    model_pipeline = Pipeline([
+        ('preprocessing', preprocessor),
+        ('classifier', RandomForestClassifier(random_state=42))
+    ])
+    param_dist = {
+        'classifier__n_estimators': [50, 100, 200],
+        'classifier__max_depth': [None, 10, 20],
+        'classifier__min_samples_split': [2, 5, 10]
+    }
+    shuffle_split = ShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
+    tuner = RandomizedSearchCV(model_pipeline, param_distributions=param_dist,
+                               n_iter=10, cv=shuffle_split, random_state=42)
+    tuner.fit(X_train, y_train)
+    return tuner.best_params_
+
+# Function to train and evaluate all models
+def evaluate_classifiers(preprocessor, X_train, X_test, y_train, y_test, best_rf_params):
+    models = {
+        "RandomForest": RandomForestClassifier(**best_rf_params),
+        "SVM": SVC(),
+        "DecisionTree": DecisionTreeClassifier(),
+        "AdaBoost": AdaBoostClassifier(),
+        "GradientBoosting": GradientBoostingClassifier(),
+        "NaiveBayes": GaussianNB(),
+        "MLP": MLPClassifier(max_iter=1000)
+    }
+    
+    # Preprocess the data
+    X_train_scaled = preprocessor.fit_transform(X_train)
+    X_test_scaled = preprocessor.transform(X_test)
+
+    results_summary = []
+    reports = {}
+    
+    for model_name, model in models.items():
+        model.fit(X_train_scaled, y_train)
+        predictions = model.predict(X_test_scaled)
+        accuracy = accuracy_score(y_test, predictions)
+        report = classification_report(y_test, predictions, zero_division=0, output_dict=True)
+        results_summary.append((model_name, accuracy))
+        reports[model_name] = report
+    
+    return results_summary, reports
+
+# Main Program (no logic inside functions)
+file_path = "Clarityy_1.xlsx"
+
+X, y, full_data = load_and_preprocess_dataset(file_path)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+preprocessor = create_preprocessor()
+best_params = tune_random_forest(preprocessor, X_train, y_train)
+
+best_rf_cleaned = {key.replace('classifier__', ''): value for key, value in best_params.items()}
+results, detailed_reports = evaluate_classifiers(preprocessor, X_train, X_test, y_train, y_test, best_rf_cleaned)
+
+# Output section
+print("=== A1: Data Preview ===")
+print(full_data.head())
+
+print("\n=== A2: Best Parameters from RandomizedSearchCV ===")
+print(best_params)
+
+print("\n=== A3: Classifier Performance Summary ===")
+performance_df = pd.DataFrame(results, columns=["Model", "Accuracy"]).sort_values(by="Accuracy", ascending=False)
+print(performance_df)
+
+print("\n=== Detailed Classification Reports ===")
+for model_name, report in detailed_reports.items():
+    print(f"\n{model_name} Report:")
+    print(pd.DataFrame(report).transpose())
